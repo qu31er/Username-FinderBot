@@ -9,21 +9,16 @@ from generator import generate_batch
 from checker import init_client, check_batch, close_client
 from database import db
 
-# Включаем логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Фикс для Python 3.13
 if sys.version_info >= (3, 13):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# Хранилище сессий пользователей
 user_sessions = {}
-
-# ==================== КНОПКИ ====================
 
 def get_main_keyboard():
     keyboard = [
@@ -38,11 +33,8 @@ def get_stop_keyboard():
     keyboard = [[InlineKeyboardButton("⏹ Остановить поиск", callback_data='stop')]]
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ ====================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = db.get_stats()
-    
     await update.message.reply_text(
         "🤖 *Бот для поиска свободных юзернеймов*\n\n"
         "Я ищу свободные ники из 5 или 6 букв.\n"
@@ -60,10 +52,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     data = query.data
     user_id = query.from_user.id
-    
     if data == 'find_5':
         await start_search(query, 5)
     elif data == 'find_6':
@@ -77,7 +67,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_search(query, length):
     user_id = query.from_user.id
-    
     if user_id in user_sessions and user_sessions[user_id].get('running', False):
         await query.edit_message_text(
             f"⏳ Уже идёт поиск для {length} букв!\n"
@@ -85,7 +74,6 @@ async def start_search(query, length):
             reply_markup=get_stop_keyboard()
         )
         return
-    
     user_sessions[user_id] = {
         'running': True,
         'found': [],
@@ -93,9 +81,7 @@ async def start_search(query, length):
         'total_checked': 0,
         'skipped_db': 0
     }
-    
     taken_count = db.get_taken_count(length)
-    
     await query.edit_message_text(
         f"🔍 Начинаю поиск *{length}-буквенных* юзернеймов...\n\n"
         f"⏳ Это может занять несколько минут.\n"
@@ -104,45 +90,35 @@ async def start_search(query, length):
         reply_markup=get_stop_keyboard(),
         parse_mode='Markdown'
     )
-    
     asyncio.create_task(run_search(user_id, length))
 
 async def run_search(user_id, length):
     try:
         await init_client()
-        
         total_checked = 0
         found_free = []
         skipped = 0
-        
         taken_set = db.get_all_taken(length)
         logger.info(f"📊 Загружено {len(taken_set)} занятых ников из БД")
-        
         while user_sessions[user_id].get('running', False):
             batch = generate_batch(length, count=BATCH_SIZE, readable=True)
             filtered = [u for u in batch if not is_forbidden(u)]
             to_check = [u for u in filtered if u not in taken_set]
             skipped += len(filtered) - len(to_check)
-            
             if not to_check:
                 logger.info("⏭ Все сгенерированные ники уже в БД, генерируем новые...")
                 continue
-            
             free = await check_batch(to_check)
             found_free.extend(free)
             total_checked += len(to_check)
-            
             user_sessions[user_id]['found'] = found_free
             user_sessions[user_id]['total_checked'] = total_checked
             user_sessions[user_id]['skipped_db'] = skipped
-            
             if len(found_free) >= MAX_RESULTS:
                 user_sessions[user_id]['running'] = False
                 break
-        
         await send_results(user_id)
         await close_client()
-        
     except Exception as e:
         logger.error(f"❌ Ошибка в run_search: {e}")
         user_sessions[user_id]['running'] = False
@@ -153,12 +129,9 @@ async def send_results(user_id):
     total = session.get('total_checked', 0)
     length = session.get('length', 0)
     skipped = session.get('skipped_db', 0)
-    
     stats = db.get_stats()
-    
     if found:
         nicks = '\n'.join([f"• @{nick}" for nick in found[:MAX_RESULTS]])
-        
         message = (
             f"✅ *Найдено {len(found)} свободных {length}-буквенных ников!*\n\n"
             f"{nicks}\n\n"
@@ -175,7 +148,6 @@ async def send_results(user_id):
             f"📦 Всего в БД занятых ({length}): {stats[f'taken_{length}']}\n\n"
             f"💡 Попробуй ещё раз или измени длину"
         )
-    
     try:
         from telegram import Bot
         bot = Bot(token=BOT_TOKEN)
@@ -190,7 +162,6 @@ async def send_results(user_id):
 
 async def show_stats(query):
     stats = db.get_stats()
-    
     message = (
         f"📊 *Статистика базы данных*\n\n"
         f"🔴 *Занятых ников:*\n"
@@ -202,7 +173,6 @@ async def show_stats(query):
         f"  • 6 букв: {stats['free_6']}\n"
         f"  • Всего: {stats['free_total']}\n"
     )
-    
     user_id = query.from_user.id
     session = user_sessions.get(user_id, {})
     if session.get('running', False):
@@ -212,12 +182,7 @@ async def show_stats(query):
             f"  • Найдено: {len(session.get('found', []))}\n"
             f"  • Пропущено из БД: {session.get('skipped_db', 0)}"
         )
-    
-    await query.edit_message_text(
-        message,
-        parse_mode='Markdown',
-        reply_markup=get_main_keyboard()
-    )
+    await query.edit_message_text(message, parse_mode='Markdown', reply_markup=get_main_keyboard())
 
 async def show_help(query):
     await query.edit_message_text(
@@ -242,38 +207,23 @@ async def show_help(query):
 
 async def stop_search(query):
     user_id = query.from_user.id
-    
     if user_id in user_sessions:
         user_sessions[user_id]['running'] = False
-        
         await query.edit_message_text(
-            "⏹ *Поиск остановлен*\n\n"
-            "Нажми /start чтобы начать снова.",
+            "⏹ *Поиск остановлен*\n\nНажми /start чтобы начать снова.",
             parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
     else:
-        await query.edit_message_text(
-            "Нет активного поиска.",
-            reply_markup=get_main_keyboard()
-        )
-
-# ==================== ЗАПУСК ====================
+        await query.edit_message_text("Нет активного поиска.", reply_markup=get_main_keyboard())
 
 async def main():
     application = Application.builder().token(BOT_TOKEN).build()
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
-    
     stats = db.get_stats()
     logger.info("🚀 Бот запущен!")
-    logger.info(f"📊 Статистика БД:")
-    logger.info(f"  • Занятых 5: {stats['taken_5']}")
-    logger.info(f"  • Занятых 6: {stats['taken_6']}")
-    logger.info(f"  • Свободных 5: {stats['free_5']}")
-    logger.info(f"  • Свободных 6: {stats['free_6']}")
-    
+    logger.info(f"📊 Статистика БД: занятых 5: {stats['taken_5']}, 6: {stats['taken_6']}, свободных 5: {stats['free_5']}, 6: {stats['free_6']}")
     await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
