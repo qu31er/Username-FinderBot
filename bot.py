@@ -1,9 +1,9 @@
 import logging
 import random
 import string
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.error import BadRequest
 from database import Database
 
 # Настройка логирования
@@ -65,18 +65,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['search_length'] = 6
         await query.message.reply_text("✅ Выбраны 6-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
 
-async def check_username(bot, username):
+def check_username_via_api(username):
     """Проверяет свободен ли юзернейм через API Telegram"""
     try:
-        # Пробуем получить информацию о пользователе по юзернейму
-        await bot.get_chat(f"@{username}")
-        return False  # Юзернейм занят
-    except BadRequest as e:
-        if "USER_ID_INVALID" in str(e) or "chat not found" in str(e):
-            return True  # Юзернейм свободен
-        return False
-    except Exception as e:
-        logger.error(f"Ошибка проверки {username}: {e}")
+        # Используем API Telegram для проверки
+        url = f"https://t.me/{username}"
+        response = requests.get(url, timeout=5)
+        
+        # Если страница существует - юзернейм занят
+        if response.status_code == 200:
+            return False
+        else:
+            return True
+    except:
+        # Если ошибка - считаем что занят
         return False
 
 async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,10 +101,10 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         found = []
         total_checked = 0
-        checked_usernames = set()  # Чтобы не проверять повторно
+        checked_usernames = set()
         
         # Генерация и проверка юзернеймов (только буквы)
-        while len(found) < count and total_checked < count * 10:
+        while len(found) < count and total_checked < count * 5:
             # Только буквы, без цифр
             username = ''.join(random.choices(string.ascii_lowercase, k=length))
             
@@ -112,11 +114,11 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             checked_usernames.add(username)
             total_checked += 1
             
-            # Реальная проверка через API
-            is_free = await check_username(context.bot, username)
+            # Проверка через сайт t.me
+            is_free = check_username_via_api(username)
             
-            # Обновляем статус каждые 50 проверок
-            if total_checked % 50 == 0:
+            # Обновляем статус каждые 20 проверок
+            if total_checked % 20 == 0:
                 try:
                     await msg.edit_text(
                         f"🔍 Ищу {count} свободных {length}-значных юзернеймов...\n"
@@ -128,6 +130,7 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if is_free:
                 found.append(username)
+                logger.info(f"Найден свободный: {username}")
         
         # Сохраняем статистику
         if length == 5:
@@ -142,17 +145,15 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if found:
             response += "📝 Нажми на любой юзернейм, чтобы проверить:\n\n"
-            # Добавляем @ перед каждым юзернеймом
             found_with_at = [f"@{username}" for username in found]
             response += "\n".join(found_with_at[:50])
             
             if len(found) > 50:
                 response += f"\n\n📎 И ещё {len(found) - 50} юзернеймов"
-        
-        if not found:
+        else:
             response = f"😔 Не найдено свободных {length}-значных юзернеймов\n\n"
             response += f"📊 Всего проверено: {total_checked}"
-            
+        
         await msg.edit_text(response)
         
     except ValueError:
