@@ -1,87 +1,65 @@
-from telethon import TelegramClient, errors
+"""
+Проверка username через Telegram API
+"""
 import asyncio
-from config import API_ID, API_HASH, PHONE_NUMBER, SESSION_NAME, CHECK_DELAY
-from database import db
+import logging
+from telethon import TelegramClient
+from telethon.errors import UsernameNotOccupiedError
 
-_client = None
+from config import API_ID, API_HASH, PHONE_NUMBER
 
-async def init_client():
-    global _client
-    if _client is None:
-        _client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-        await _client.start(phone=PHONE_NUMBER)
-        print("✅ Клиент Telethon инициализирован")
-    return _client
+logger = logging.getLogger(__name__)
 
-async def get_client():
-    if _client is None:
-        await init_client()
-    return _client
-
-async def check_username(username):
-    username = username.upper()
+class UsernameChecker:
+    """Класс для проверки username"""
     
-    if db.is_taken(username):
-        print(f"⏭ Пропускаем (уже в БД): {username}")
-        return False
+    def __init__(self, db):
+        self.db = db
+        self.client = None
     
-    if db.is_free(username):
-        print(f"✅ Уже найден как свободный: {username}")
-        return True
+    async def get_client(self):
+        """Получить или создать клиент Telethon"""
+        if self.client is None:
+            self.client = TelegramClient('session', API_ID, API_HASH)
+            await self.client.start(phone=PHONE_NUMBER)
+            logger.info("✅ Telethon клиент подключён")
+        return self.client
     
-    client = await get_client()
-    
-    try:
-        await client.get_entity(f'@{username}')
-        db.add_taken(username)
-        print(f"❌ Занят (сохранён в БД): {username}")
-        return False
-    except ValueError as e:
-        if 'No user has "username" as username' in str(e):
-            db.add_free(username)
-            print(f"✅ СВОБОДЕН (сохранён в БД): {username}")
-            return True
-        else:
+    async def check_username(self, username: str) -> bool:
+        """
+        Проверяет, свободен ли username
+        
+        Returns:
+            True - если свободен, False - если занят
+        """
+        try:
+            client = await self.get_client()
+            
+            # Пробуем получить информацию о пользователе
+            entity = await client.get_entity(f"@{username}")
+            
+            # Если мы здесь - значит пользователь существует
+            logger.debug(f"@{username} - занят")
             return False
-    except errors.FloodWaitError as e:
-        print(f"⏳ Flood wait {e.seconds} секунд")
-        await asyncio.sleep(e.seconds)
-        return await check_username(username)
-    except Exception as e:
-        print(f'❌ Ошибка при проверке {username}: {e}')
-        return False
-
-async def check_batch(usernames):
-    free = []
-    total = len(usernames)
+            
+        except UsernameNotOccupiedError:
+            # Username свободен
+            logger.debug(f"@{username} - СВОБОДЕН!")
+            return True
+            
+        except ValueError as e:
+            # Неверный формат username
+            logger.warning(f"Ошибка формата @{username}: {e}")
+            return False
+            
+        except Exception as e:
+            # Другие ошибки (например, флуд)
+            logger.error(f"Ошибка проверки @{username}: {e}")
+            await asyncio.sleep(5)  # Ждём перед повторной попыткой
+            return False
     
-    to_check = []
-    for username in usernames:
-        username = username.upper()
-        if db.is_taken(username):
-            print(f"⏭ Пропускаем (БД): {username}")
-        elif db.is_free(username):
-            free.append(username)
-            print(f"✅ Из БД (свободный): {username}")
-        else:
-            to_check.append(username)
-    
-    print(f"📊 Всего: {total}, из БД пропущено: {total - len(to_check)}, к проверке: {len(to_check)}")
-    
-    for i, username in enumerate(to_check):
-        if await check_username(username):
-            free.append(username)
-        
-        if (i + 1) % 10 == 0:
-            print(f"📊 Проверено: {i+1}/{len(to_check)}")
-        
-        await asyncio.sleep(CHECK_DELAY)
-    
-    return free
-
-async def close_client():
-    global _client
-    if _client:
-        await _client.disconnect()
-        _client = None
-        print("🔌 Клиент закрыт")
+    async def close(self):
+        """Закрыть клиент"""
+        if self.client:
+            await self.client.disconnect()
+            logger.info("🔌 Telethon клиент отключён")
