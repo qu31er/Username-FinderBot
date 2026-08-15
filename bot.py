@@ -66,8 +66,7 @@ def check_username(username):
     try:
         url = f"https://t.me/{username}"
         response = requests.get(url, timeout=3)
-        # Если 200 - занят, если 404 - свободен
-        return response.status_code == 404
+        return response.status_code == 404  # 404 - свободен
     except:
         return False
 
@@ -83,13 +82,16 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         length = context.user_data['search_length']
-        msg = await update.message.reply_text(f"🔍 Ищу {count} свободных {length}-значных...")
+        msg = await update.message.reply_text(f"🔍 Начинаю поиск {count} {length}-значных юзернеймов...\n\n")
         
         found = []
         total_checked = 0
         checked = set()
         
-        while len(found) < count and total_checked < count * 3:
+        # Список для отображения (последние 30 проверок)
+        last_checks = []
+        
+        while len(found) < count and total_checked < count * 5:
             username = ''.join(random.choices(string.ascii_lowercase, k=length))
             
             if username in checked:
@@ -97,16 +99,29 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             checked.add(username)
             total_checked += 1
             
-            if check_username(username):
-                found.append(username)
+            is_free = check_username(username)
             
-            if total_checked % 50 == 0:
+            if is_free:
+                found.append(username)
+                last_checks.append(f"✅ @{username}")
+                logger.info(f"✅ Найден: {username}")
+            else:
+                last_checks.append(f"❌ @{username}")
+            
+            # Показываем последние 20 проверок
+            if total_checked % 5 == 0 or len(found) >= count:
+                display_checks = last_checks[-20:]  # Последние 20
+                progress = f"🔍 Поиск {count} {length}-значных юзернеймов\n"
+                progress += f"⏳ Проверено: {total_checked} | ✅ Найдено: {len(found)}\n\n"
+                progress += "\n".join(display_checks)
+                
+                if len(found) < count:
+                    progress += f"\n\n⏳ Продолжаю поиск..."
+                else:
+                    progress += f"\n\n✅ ПОИСК ЗАВЕРШЕН!"
+                
                 try:
-                    await msg.edit_text(
-                        f"🔍 Ищу...\n"
-                        f"⏳ Проверено: {total_checked}\n"
-                        f"✅ Найдено: {len(found)}"
-                    )
+                    await msg.edit_text(progress)
                 except:
                     pass
         
@@ -116,20 +131,25 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             db.update_stats_6(total_checked, len(found))
         
-        # Ответ
+        # Финальный результат
+        final_response = f"✅ ГОТОВО! Найдено {len(found)} свободных {length}-значных юзернеймов\n\n"
+        
         if found:
-            response = f"✅ Найдено {len(found)} свободных {length}-значных!\n\n"
-            response += "\n".join([f"@{u}" for u in found[:50]])
+            final_response += "🎯 Свободные юзернеймы:\n"
+            final_response += "\n".join([f"✅ @{u}" for u in found[:50]])
             if len(found) > 50:
-                response += f"\n\n📎 И ещё {len(found) - 50}"
+                final_response += f"\n\n📎 И ещё {len(found) - 50} юзернеймов"
         else:
-            response = f"😔 Не найдено. Проверено: {total_checked}"
+            final_response = f"😔 Не найдено свободных {length}-значных юзернеймов\n"
+            final_response += f"📊 Проверено: {total_checked}"
         
-        await msg.edit_text(response)
+        await msg.edit_text(final_response)
         
+    except ValueError:
+        await update.message.reply_text("⚠️ Отправь число, например: 50")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("❌ Ошибка")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 def main():
     TOKEN = "8793233752:AAHmCe0bv_rTN9nmMvCW7FuqxRGME2HFFgg"
