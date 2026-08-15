@@ -62,12 +62,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("✅ Выбраны 6-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
 
 def check_username(username):
-    """Проверка через t.me"""
+    """Проверка через t.me - ВОЗВРАЩАЕТ True если СВОБОДЕН"""
     try:
         url = f"https://t.me/{username}"
-        response = requests.get(url, timeout=3)
-        return response.status_code == 404  # 404 - свободен
-    except:
+        response = requests.get(url, timeout=5, allow_redirects=True)
+        # Если 404 - страницы нет, значит юзернейм свободен
+        if response.status_code == 404:
+            return True
+        # Если есть контент - занят
+        else:
+            return False
+    except Exception as e:
+        logger.error(f"Ошибка проверки {username}: {e}")
         return False
 
 async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -87,8 +93,6 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         found = []
         total_checked = 0
         checked = set()
-        
-        # Список для отображения (последние 30 проверок)
         last_checks = []
         
         while len(found) < count and total_checked < count * 5:
@@ -99,29 +103,30 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             checked.add(username)
             total_checked += 1
             
+            # РЕАЛЬНАЯ ПРОВЕРКА
             is_free = check_username(username)
             
             if is_free:
                 found.append(username)
                 last_checks.append(f"✅ @{username}")
-                logger.info(f"✅ Найден: {username}")
+                logger.info(f"✅ СВОБОДЕН: {username}")
             else:
                 last_checks.append(f"❌ @{username}")
             
-            # Показываем последние 20 проверок
-            if total_checked % 5 == 0 or len(found) >= count:
-                display_checks = last_checks[-20:]  # Последние 20
-                progress = f"🔍 Поиск {count} {length}-значных юзернеймов\n"
-                progress += f"⏳ Проверено: {total_checked} | ✅ Найдено: {len(found)}\n\n"
-                progress += "\n".join(display_checks)
+            # Обновляем каждые 3 проверки
+            if total_checked % 3 == 0 or len(found) >= count:
+                display = last_checks[-30:]
+                text = f"🔍 Поиск {count} {length}-значных\n"
+                text += f"⏳ Проверено: {total_checked} | ✅ Найдено: {len(found)}\n\n"
+                text += "\n".join(display)
                 
                 if len(found) < count:
-                    progress += f"\n\n⏳ Продолжаю поиск..."
+                    text += f"\n\n⏳ Продолжаю..."
                 else:
-                    progress += f"\n\n✅ ПОИСК ЗАВЕРШЕН!"
+                    text += f"\n\n✅ ГОТОВО!"
                 
                 try:
-                    await msg.edit_text(progress)
+                    await msg.edit_text(text)
                 except:
                     pass
         
@@ -132,21 +137,18 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.update_stats_6(total_checked, len(found))
         
         # Финальный результат
-        final_response = f"✅ ГОТОВО! Найдено {len(found)} свободных {length}-значных юзернеймов\n\n"
-        
         if found:
-            final_response += "🎯 Свободные юзернеймы:\n"
-            final_response += "\n".join([f"✅ @{u}" for u in found[:50]])
+            final = f"✅ Найдено {len(found)} свободных {length}-значных!\n\n"
+            final += "\n".join([f"✅ @{u}" for u in found[:50]])
             if len(found) > 50:
-                final_response += f"\n\n📎 И ещё {len(found) - 50} юзернеймов"
+                final += f"\n\n📎 И ещё {len(found) - 50}"
         else:
-            final_response = f"😔 Не найдено свободных {length}-значных юзернеймов\n"
-            final_response += f"📊 Проверено: {total_checked}"
+            final = f"😔 Не найдено. Проверено: {total_checked}"
         
-        await msg.edit_text(final_response)
+        await msg.edit_text(final)
         
     except ValueError:
-        await update.message.reply_text("⚠️ Отправь число, например: 50")
+        await update.message.reply_text("⚠️ Отправь число")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
