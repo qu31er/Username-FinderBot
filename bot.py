@@ -1,221 +1,97 @@
-
-import asyncio
 import logging
-import sys
-from datetime import datetime
-from pathlib import Path
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-
-from config import BOT_TOKEN, CHECK_DELAY, MAX_RESULTS
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from database import Database
-from checker import UsernameChecker
-from generator import UsernameGenerator
 
 # Настройка логирования
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация БД и генератора
+# Инициализация базы данных
 db = Database()
-generator = UsernameGenerator()
-checker = UsernameChecker(db)
 
-# Состояния пользователей
-user_states = {}
-
-# === Обработчики команд ===
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /start - приветствие и статистика"""
-    user = update.effective_user
-    stats = db.get_stats()
-    
-    # Формируем статистику
-    stats_text = (
-        f"👋 Привет, {user.first_name}!\n\n"
-        f"🤖 Я ищу свободные Telegram-юзернеймы из 5 или 6 букв.\n"
-        f"📊 Статистика БД:\n"
-        f"• Занятых 5 букв: {stats['taken_5']}\n"
-        f"• Занятых 6 букв: {stats['taken_6']}\n"
-        f"• Свободных 5 букв: {stats['free_5']}\n"
-        f"• Свободных 6 букв: {stats['free_6']}\n"
-        f"• Всего проверено: {stats['total_checked']}\n\n"
-        f"🔍 Выбери длину ника для поиска:"
-    )
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("🔍 5 букв", callback_data="search_5"),
-            InlineKeyboardButton("🔍 6 букв", callback_data="search_6"),
-        ],
-        [InlineKeyboardButton("📊 Обновить статистику", callback_data="stats")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(stats_text, reply_markup=reply_markup)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка нажатий на кнопки"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    data = query.data
-    
-    if data == "stats":
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    try:
         stats = db.get_stats()
-        stats_text = (
-            f"📊 Статистика БД:\n"
-            f"• Занятых 5 букв: {stats['taken_5']}\n"
-            f"• Занятых 6 букв: {stats['taken_6']}\n"
-            f"• Свободных 5 букв: {stats['free_5']}\n"
-            f"• Свободных 6 букв: {stats['free_6']}\n"
-            f"• Всего проверено: {stats['total_checked']}"
+        
+        # Безопасное получение значений
+        total_checked = stats.get('total_checked', 0) if stats else 0
+        total_passed = stats.get('total_passed', 0) if stats else 0
+        total_failed = stats.get('total_failed', 0) if stats else 0
+        
+        await update.message.reply_text(
+            f"👋 Привет! Я бот для проверки ссылок.\n\n"
+            f"📊 Статистика:\n"
+            f"• Всего проверено: {total_checked}\n"
+            f"• Успешно: {total_passed}\n"
+            f"• Ошибок: {total_failed}\n\n"
+            f"📎 Отправь мне ссылку, и я её проверю."
         )
-        await query.edit_message_text(stats_text)
-        return
-    
-    if data.startswith("search_"):
-        length = int(data.split("_")[1])
+    except Exception as e:
+        logger.error(f"Ошибка в start: {e}")
+        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
+
+async def check_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ссылок"""
+    try:
+        url = update.message.text
+        user_id = update.effective_user.id
         
-        # Проверяем, не запущен ли уже поиск для этого пользователя
-        if user_id in user_states and user_states[user_id].get("running", False):
-            await query.edit_message_text("⏳ Поиск уже запущен! Подожди...")
-            return
+        # Здесь ваша логика проверки ссылки
+        # Пример:
+        # result = check_url(url)
         
-        # Запускаем поиск
-        user_states[user_id] = {"running": True, "length": length}
+        # Обновляем статистику
+        db.update_stats(user_id, url, status="checked")
         
-        await query.edit_message_text(
-            f"🔍 Начинаю поиск свободных {length}-буквенных ников...\n"
-            f"⏱ Задержка {CHECK_DELAY} сек между запросами\n"
-            f"Это может занять некоторое время..."
+        await update.message.reply_text(
+            f"✅ Ссылка проверена!\n"
+            f"🔗 {url}\n"
+            f"📊 Статус: OK"
         )
+    except Exception as e:
+        logger.error(f"Ошибка при проверке ссылки: {e}")
+        await update.message.reply_text("⚠️ Ошибка при проверке ссылки.")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /stats"""
+    try:
+        stats = db.get_stats()
         
-        try:
-            # Генерируем ники и проверяем
-            found = []
-            checked = 0
-            skipped = 0
-            
-            async for username in generator.generate_readable(length):
-                # Проверяем, не отменён ли поиск
-                if not user_states.get(user_id, {}).get("running", False):
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text="⏹ Поиск остановлен пользователем."
-                    )
-                    return
-                
-                # Проверяем в БД
-                if db.is_checked(username):
-                    skipped += 1
-                    continue
-                
-                # Проверяем через Telegram API
-                is_free = await checker.check_username(username)
-                checked += 1
-                
-                if is_free:
-                    found.append(username)
-                    db.save_free(username)
-                    # Отправляем найденный ник сразу
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"✅ Найден свободный ник: @{username}"
-                    )
-                    if len(found) >= MAX_RESULTS:
-                        break
-                else:
-                    db.save_taken(username)
-                
-                # Задержка между запросами
-                await asyncio.sleep(CHECK_DELAY)
-            
-            # Итоговое сообщение
-            if found:
-                result_text = (
-                    f"✅ Найдено {len(found)} свободных {length}-буквенных ников!\n\n"
-                    f"📊 Проверено новых: {checked}\n"
-                    f"♻️ Пропущено из словарей: {skipped}\n"
-                    f"📦 Всего в словарях занятых ({length}): {db.count_taken(length)}"
-                )
-            else:
-                result_text = (
-                    f"😕 Не найдено новых свободных {length}-буквенных ников.\n\n"
-                    f"📊 Проверено новых: {checked}\n"
-                    f"♻️ Пропущено из словарей: {skipped}\n"
-                    f"📦 Всего в словарях занятых ({length}): {db.count_taken(length)}"
-                )
-            
-            await context.bot.send_message(chat_id=user_id, text=result_text)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при поиске: {e}")
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ Ошибка при поиске: {str(e)}"
-            )
-        finally:
-            user_states[user_id] = {"running": False}
+        total_checked = stats.get('total_checked', 0) if stats else 0
+        total_passed = stats.get('total_passed', 0) if stats else 0
+        total_failed = stats.get('total_failed', 0) if stats else 0
+        
+        await update.message.reply_text(
+            f"📊 Детальная статистика:\n"
+            f"• Всего проверено: {total_checked}\n"
+            f"• Успешно: {total_passed}\n"
+            f"• Ошибок: {total_failed}\n"
+            f"• Процент успеха: {round((total_passed / total_checked * 100) if total_checked > 0 else 0, 1)}%"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка в stats: {e}")
+        await update.message.reply_text("⚠️ Ошибка получения статистики.")
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /cancel - остановить поиск"""
-    user_id = update.effective_user.id
-    if user_id in user_states:
-        user_states[user_id]["running"] = False
-        await update.message.reply_text("⏹ Поиск остановлен.")
-    else:
-        await update.message.reply_text("🤔 У тебя нет активного поиска.")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /stats - показать статистику"""
-    stats = db.get_stats()
-    stats_text = (
-        f"📊 Статистика БД:\n"
-        f"• Занятых 5 букв: {stats['taken_5']}\n"
-        f"• Занятых 6 букв: {stats['taken_6']}\n"
-        f"• Свободных 5 букв: {stats['free_5']}\n"
-        f"• Свободных 6 букв: {stats['free_6']}\n"
-        f"• Всего проверено: {stats['total_checked']}"
-    )
-    await update.message.reply_text(stats_text)
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /help - справка"""
-    help_text = (
-        "🤖 Помощь по боту:\n\n"
-        "/start - Главное меню со статистикой\n"
-        "/stats - Показать статистику БД\n"
-        "/cancel - Остановить текущий поиск\n"
-        "/help - Эта справка\n\n"
-        "🔍 Используй кнопки в меню для поиска ников.\n"
-        "⚠️ Бот использует твой аккаунт для проверки, не злоупотребляй!"
-    )
-    await update.message.reply_text(help_text)
-
-# === ИНИЦИАЛИЗАЦИЯ БОТА (ИСПРАВЛЕННАЯ ВЕРСИЯ) ===
-
-def main() -> None:
+def main():
     """Запуск бота"""
-    # Создаём приложение
-    application = Application.builder().token(BOT_TOKEN).build()
+    # Замените на ваш токен
+    TOKEN = "8793233752:AAHmCe0bv_rTN9nmMvCW7FuqxRGME2HFFgg"
     
-    # Добавляем обработчики
+    # Создаем приложение
+    application = Application.builder().token(TOKEN).build()
+    
+    # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("cancel", cancel))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_link))
     
     # Запускаем бота
-    logger.info("🚀 Бот запущен!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
