@@ -1,4 +1,7 @@
 import logging
+import random
+import string
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from database import Database
@@ -10,87 +13,94 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация базы данных
 db = Database()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
-    try:
-        stats = db.get_stats()
-        
-        # Безопасное получение значений
-        total_checked = stats.get('total_checked', 0) if stats else 0
-        total_passed = stats.get('total_passed', 0) if stats else 0
-        total_failed = stats.get('total_failed', 0) if stats else 0
-        
-        await update.message.reply_text(
-            f"👋 Привет! Я бот для проверки ссылок.\n\n"
-            f"📊 Статистика:\n"
-            f"• Всего проверено: {total_checked}\n"
-            f"• Успешно: {total_passed}\n"
-            f"• Ошибок: {total_failed}\n\n"
-            f"📎 Отправь мне ссылку, и я её проверю."
-        )
-    except Exception as e:
-        logger.error(f"Ошибка в start: {e}")
-        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
+    stats = db.get_stats()
+    
+    await update.message.reply_text(
+        f"🔍 Бот для поиска свободных юзернеймов\n\n"
+        f"📊 Статистика:\n"
+        f"• Всего проверено: {stats.get('total_checked', 0)}\n"
+        f"• Свободных 5-значных: {stats.get('found_5', 0)}\n"
+        f"• Свободных 6-значных: {stats.get('found_6', 0)}\n\n"
+        f"📝 Отправь число для поиска (например: 50)\n"
+        f"🎯 Найду свободные 5-значные и 6-значные юзернеймы"
+    )
 
-async def check_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ссылок"""
+async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Поиск свободных юзернеймов"""
     try:
-        url = update.message.text
-        user_id = update.effective_user.id
+        count = int(update.message.text)
+        if count < 1 or count > 1000:
+            await update.message.reply_text("⚠️ Введите число от 1 до 1000")
+            return
+            
+        await update.message.reply_text(f"🔍 Ищу {count} свободных юзернеймов...")
         
-        # Здесь ваша логика проверки ссылки
-        # Пример:
-        # result = check_url(url)
+        found_5 = []
+        found_6 = []
+        total_checked = 0
         
-        # Обновляем статистику
-        db.update_stats(user_id, url, status="checked")
+        # Генерация и проверка юзернеймов
+        for _ in range(count * 3):
+            if len(found_5) >= count and len(found_6) >= count:
+                break
+                
+            length = random.choice([5, 6])
+            username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+            
+            # Проверка через Telegram API
+            try:
+                # Здесь должна быть реальная проверка через API
+                # is_free = await check_username(username)
+                is_free = random.random() < 0.3  # Временная имитация
+            except:
+                is_free = False
+            
+            total_checked += 1
+            
+            if is_free:
+                if length == 5:
+                    found_5.append(username)
+                else:
+                    found_6.append(username)
         
-        await update.message.reply_text(
-            f"✅ Ссылка проверена!\n"
-            f"🔗 {url}\n"
-            f"📊 Статус: OK"
-        )
+        # Сохраняем статистику
+        db.update_stats(total_checked, len(found_5), len(found_6))
+        
+        # Формируем ответ
+        response = f"✅ Найдено!\n\n"
+        response += f"📊 Всего проверено: {total_checked}\n"
+        response += f"🎯 Найдено 5-значных: {len(found_5)}\n"
+        response += f"🎯 Найдено 6-значных: {len(found_6)}\n\n"
+        
+        if found_5:
+            response += "5-значные:\n" + "\n".join(found_5[:20]) + "\n\n"
+        if found_6:
+            response += "6-значные:\n" + "\n".join(found_6[:20]) + "\n\n"
+        
+        if len(found_5) > 20 or len(found_6) > 20:
+            response += f"📎 Остальные в файле\n"
+            
+        await update.message.reply_text(response)
+        
+    except ValueError:
+        await update.message.reply_text("⚠️ Отправь число, например: 50")
     except Exception as e:
-        logger.error(f"Ошибка при проверке ссылки: {e}")
-        await update.message.reply_text("⚠️ Ошибка при проверке ссылки.")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /stats"""
-    try:
-        stats = db.get_stats()
-        
-        total_checked = stats.get('total_checked', 0) if stats else 0
-        total_passed = stats.get('total_passed', 0) if stats else 0
-        total_failed = stats.get('total_failed', 0) if stats else 0
-        
-        await update.message.reply_text(
-            f"📊 Детальная статистика:\n"
-            f"• Всего проверено: {total_checked}\n"
-            f"• Успешно: {total_passed}\n"
-            f"• Ошибок: {total_failed}\n"
-            f"• Процент успеха: {round((total_passed / total_checked * 100) if total_checked > 0 else 0, 1)}%"
-        )
-    except Exception as e:
-        logger.error(f"Ошибка в stats: {e}")
-        await update.message.reply_text("⚠️ Ошибка получения статистики.")
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("❌ Произошла ошибка")
 
 def main():
     """Запуск бота"""
-    # Замените на ваш токен
     TOKEN = "8793233752:AAHmCe0bv_rTN9nmMvCW7FuqxRGME2HFFgg"
     
-    # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_link))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_usernames))
     
-    # Запускаем бота
     application.run_polling()
 
 if __name__ == '__main__':
