@@ -31,7 +31,7 @@
 ## 📥 Установка
 
 1. Клонируй репозиторий:
-git clone https://github.com/yourusername/telegram-username-finder.git
+git clone https://github.com/qu31er/telegram-username-finder.git
 cd telegram-username-finder
 
 2. Создай виртуальное окружение:
