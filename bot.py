@@ -62,18 +62,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("✅ Выбраны 6-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
 
 def check_username(username):
-    """Проверка через t.me - ВОЗВРАЩАЕТ True если СВОБОДЕН"""
+    """Проверка через t.me"""
     try:
         url = f"https://t.me/{username}"
-        response = requests.get(url, timeout=5, allow_redirects=True)
-        # Если 404 - страницы нет, значит юзернейм свободен
+        response = requests.get(url, timeout=5)
+        # Если статус 200 - страница существует = юзернейм занят
+        # Если статус 404 - страница не найдена = юзернейм свободен
         if response.status_code == 404:
             return True
-        # Если есть контент - занят
         else:
             return False
+    except requests.exceptions.Timeout:
+        return False
     except Exception as e:
-        logger.error(f"Ошибка проверки {username}: {e}")
+        logger.error(f"Ошибка: {e}")
         return False
 
 async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +105,7 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             checked.add(username)
             total_checked += 1
             
-            # РЕАЛЬНАЯ ПРОВЕРКА
+            # ПРОВЕРКА
             is_free = check_username(username)
             
             if is_free:
@@ -113,8 +115,8 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 last_checks.append(f"❌ @{username}")
             
-            # Обновляем каждые 3 проверки
-            if total_checked % 3 == 0 or len(found) >= count:
+            # Обновляем каждые 5 проверок
+            if total_checked % 5 == 0 or len(found) >= count:
                 display = last_checks[-30:]
                 text = f"🔍 Поиск {count} {length}-значных\n"
                 text += f"⏳ Проверено: {total_checked} | ✅ Найдено: {len(found)}\n\n"
