@@ -1,46 +1,39 @@
+
 import random
+import asyncio
 
-VOWELS = 'AEIOU'
-CONSONANTS = 'BCDFGHJKLMNPQRSTVWXYZ'
-
-def generate_readable(length):
-    """
-    Генерирует читаемый username (чередование гласных/согласных).
-    """
-    if length == 5:
-        pattern = random.choice(['CVCVC', 'VCVCV'])
-    else:  # length == 6
-        pattern = random.choice(['CVCVCV', 'VCVCVC'])
+class UsernameGenerator:
     
-    result = ''
-    for ch in pattern:
-        if ch == 'C':
-            result += random.choice(CONSONANTS)
-        else:
-            result += random.choice(VOWELS)
-    return result
-
-def generate_combination(length):
-    """
-    Генерирует случайную комбинацию букв (без фильтра).
-    """
-    letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    return ''.join(random.choice(letters) for _ in range(length))
-
-def generate_batch(length, count=100, readable=True):
-    """
-    Генерирует пачку username'ов.
-    """
-    usernames = set()
-    attempts = 0
-    max_attempts = count * 10
+    def __init__(self):
+        self.vowels = 'aeiouy'
+        self.consonants = 'bcdfghjklmnpqrstvwxz'
+        self.generated = set()
     
-    while len(usernames) < count and attempts < max_attempts:
-        attempts += 1
-        if readable:
-            nick = generate_readable(length)
-        else:
-            nick = generate_combination(length)
-        usernames.add(nick)
-    
-    return list(usernames)[:count]
+    async def generate_readable(self, length: int):
+        """
+       
+        
+        Args:
+            length: длина ника (5 или 6)
+        
+        Yields:
+            str: читаемый username
+        """
+        while True:
+            # Чередуем согласные и гласные для читаемости
+            username = []
+            for i in range(length):
+                if i % 2 == 0:
+                    username.append(random.choice(self.consonants))
+                else:
+                    username.append(random.choice(self.vowels))
+            
+            result = ''.join(username)
+            
+            # Пропускаем повторы
+            if result not in self.generated:
+                self.generated.add(result)
+                yield result
+            
+            # Даём время другим задачам
+            await asyncio.sleep(0)
