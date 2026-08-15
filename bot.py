@@ -6,7 +6,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from database import Database
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -16,7 +15,6 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start с инлайн кнопками"""
     stats = db.get_stats()
     
     keyboard = [
@@ -43,7 +41,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатия инлайн кнопок"""
     query = update.callback_query
     await query.answer()
     
@@ -57,7 +54,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Сохраняем выбранную длину в context
     if query.data == "length_5":
         context.user_data['search_length'] = 5
         await query.message.reply_text("✅ Выбраны 5-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
@@ -65,30 +61,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['search_length'] = 6
         await query.message.reply_text("✅ Выбраны 6-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
 
-def check_username_via_api(username):
-    """Проверяет свободен ли юзернейм через API Telegram"""
+def check_username(username):
+    """Проверка через t.me"""
     try:
-        # Используем API Telegram для проверки
         url = f"https://t.me/{username}"
-        response = requests.get(url, timeout=5)
-        
-        # Если страница существует - юзернейм занят
-        if response.status_code == 200:
-            return False
-        else:
-            return True
+        response = requests.get(url, timeout=3)
+        # Если 200 - занят, если 404 - свободен
+        return response.status_code == 404
     except:
-        # Если ошибка - считаем что занят
         return False
 
 async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Поиск свободных юзернеймов"""
     try:
-        # Проверяем выбрана ли длина
         if 'search_length' not in context.user_data:
-            await update.message.reply_text(
-                "⚠️ Сначала выбери длину юзернейма через /start"
-            )
+            await update.message.reply_text("⚠️ Сначала выбери длину через /start")
             return
             
         count = int(update.message.text)
@@ -97,40 +83,32 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         length = context.user_data['search_length']
-        msg = await update.message.reply_text(f"🔍 Ищу {count} свободных {length}-значных юзернеймов...\n⏳ Это может занять время")
+        msg = await update.message.reply_text(f"🔍 Ищу {count} свободных {length}-значных...")
         
         found = []
         total_checked = 0
-        checked_usernames = set()
+        checked = set()
         
-        # Генерация и проверка юзернеймов (только буквы)
-        while len(found) < count and total_checked < count * 5:
-            # Только буквы, без цифр
+        while len(found) < count and total_checked < count * 3:
             username = ''.join(random.choices(string.ascii_lowercase, k=length))
             
-            # Пропускаем если уже проверяли
-            if username in checked_usernames:
+            if username in checked:
                 continue
-            checked_usernames.add(username)
+            checked.add(username)
             total_checked += 1
             
-            # Проверка через сайт t.me
-            is_free = check_username_via_api(username)
+            if check_username(username):
+                found.append(username)
             
-            # Обновляем статус каждые 20 проверок
-            if total_checked % 20 == 0:
+            if total_checked % 50 == 0:
                 try:
                     await msg.edit_text(
-                        f"🔍 Ищу {count} свободных {length}-значных юзернеймов...\n"
+                        f"🔍 Ищу...\n"
                         f"⏳ Проверено: {total_checked}\n"
                         f"✅ Найдено: {len(found)}"
                     )
                 except:
                     pass
-            
-            if is_free:
-                found.append(username)
-                logger.info(f"Найден свободный: {username}")
         
         # Сохраняем статистику
         if length == 5:
@@ -138,34 +116,23 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             db.update_stats_6(total_checked, len(found))
         
-        # Формируем ответ с @
-        response = f"✅ Найдено {len(found)} свободных {length}-значных юзернеймов!\n\n"
-        response += f"📊 Всего проверено: {total_checked}\n"
-        response += f"🎯 Найдено: {len(found)}\n\n"
-        
+        # Ответ
         if found:
-            response += "📝 Нажми на любой юзернейм, чтобы проверить:\n\n"
-            found_with_at = [f"@{username}" for username in found]
-            response += "\n".join(found_with_at[:50])
-            
+            response = f"✅ Найдено {len(found)} свободных {length}-значных!\n\n"
+            response += "\n".join([f"@{u}" for u in found[:50]])
             if len(found) > 50:
-                response += f"\n\n📎 И ещё {len(found) - 50} юзернеймов"
+                response += f"\n\n📎 И ещё {len(found) - 50}"
         else:
-            response = f"😔 Не найдено свободных {length}-значных юзернеймов\n\n"
-            response += f"📊 Всего проверено: {total_checked}"
+            response = f"😔 Не найдено. Проверено: {total_checked}"
         
         await msg.edit_text(response)
         
-    except ValueError:
-        await update.message.reply_text("⚠️ Отправь число, например: 50")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        await update.message.reply_text("❌ Ошибка")
 
 def main():
-    """Запуск бота"""
     TOKEN = "8793233752:AAHmCe0bv_rTN9nmMvCW7FuqxRGME2HFFgg"
-    
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
