@@ -3,6 +3,7 @@ import random
 import string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.error import BadRequest
 from database import Database
 
 # Настройка логирования
@@ -64,6 +65,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['search_length'] = 6
         await query.message.reply_text("✅ Выбраны 6-значные юзернеймы\n\nОтправь количество для поиска (например: 50)")
 
+async def check_username(bot, username):
+    """Проверяет свободен ли юзернейм через API Telegram"""
+    try:
+        # Пробуем получить информацию о пользователе по юзернейму
+        await bot.get_chat(f"@{username}")
+        return False  # Юзернейм занят
+    except BadRequest as e:
+        if "USER_ID_INVALID" in str(e) or "chat not found" in str(e):
+            return True  # Юзернейм свободен
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка проверки {username}: {e}")
+        return False
+
 async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск свободных юзернеймов"""
     try:
@@ -80,27 +95,36 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         length = context.user_data['search_length']
-        await update.message.reply_text(f"🔍 Ищу {count} свободных {length}-значных юзернеймов...")
+        msg = await update.message.reply_text(f"🔍 Ищу {count} свободных {length}-значных юзернеймов...\n⏳ Это может занять время")
         
         found = []
         total_checked = 0
+        checked_usernames = set()  # Чтобы не проверять повторно
         
         # Генерация и проверка юзернеймов (только буквы)
-        for _ in range(count * 5):
-            if len(found) >= count:
-                break
-                
+        while len(found) < count and total_checked < count * 10:
             # Только буквы, без цифр
             username = ''.join(random.choices(string.ascii_lowercase, k=length))
             
-            # Проверка через Telegram API
-            try:
-                # Временная имитация - 30% шанс что свободен
-                is_free = random.random() < 0.3
-            except:
-                is_free = False
-            
+            # Пропускаем если уже проверяли
+            if username in checked_usernames:
+                continue
+            checked_usernames.add(username)
             total_checked += 1
+            
+            # Реальная проверка через API
+            is_free = await check_username(context.bot, username)
+            
+            # Обновляем статус каждые 50 проверок
+            if total_checked % 50 == 0:
+                try:
+                    await msg.edit_text(
+                        f"🔍 Ищу {count} свободных {length}-значных юзернеймов...\n"
+                        f"⏳ Проверено: {total_checked}\n"
+                        f"✅ Найдено: {len(found)}"
+                    )
+                except:
+                    pass
             
             if is_free:
                 found.append(username)
@@ -120,22 +144,22 @@ async def search_usernames(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "📝 Нажми на любой юзернейм, чтобы проверить:\n\n"
             # Добавляем @ перед каждым юзернеймом
             found_with_at = [f"@{username}" for username in found]
-            response += "\n".join(found_with_at[:30])
+            response += "\n".join(found_with_at[:50])
             
-            if len(found) > 30:
-                response += f"\n\n📎 И ещё {len(found) - 30} юзернеймов"
+            if len(found) > 50:
+                response += f"\n\n📎 И ещё {len(found) - 50} юзернеймов"
         
         if not found:
             response = f"😔 Не найдено свободных {length}-значных юзернеймов\n\n"
             response += f"📊 Всего проверено: {total_checked}"
             
-        await update.message.reply_text(response)
+        await msg.edit_text(response)
         
     except ValueError:
         await update.message.reply_text("⚠️ Отправь число, например: 50")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("❌ Произошла ошибка")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
 
 def main():
     """Запуск бота"""
