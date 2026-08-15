@@ -15,7 +15,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-if sys.version_info >= (3, 13):
+# Фикс для Python 3.11+
+if sys.version_info >= (3, 11):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 user_sessions = {}
@@ -217,14 +218,18 @@ async def stop_search(query):
     else:
         await query.edit_message_text("Нет активного поиска.", reply_markup=get_main_keyboard())
 
-async def main():
+def run_bot():
+    """Запуск бота с правильным обработчиком событий"""
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
+    
     stats = db.get_stats()
     logger.info("🚀 Бот запущен!")
     logger.info(f"📊 Статистика БД: занятых 5: {stats['taken_5']}, 6: {stats['taken_6']}, свободных 5: {stats['free_5']}, 6: {stats['free_6']}")
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Запускаем polling с правильной обработкой
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    run_bot()
