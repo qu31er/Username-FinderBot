@@ -1,6 +1,5 @@
 import sqlite3
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -10,23 +9,10 @@ class Database:
         self.init_db()
     
     def init_db(self):
-        """Инициализация базы данных"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Таблица проверок
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS checks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    url TEXT,
-                    status TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Таблица статистики
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,47 +21,48 @@ class Database:
                 )
             ''')
             
-            # Инициализация ключей статистики
+            # Инициализация ключей
             cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('total_checked', 0))
-            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('total_passed', 0))
-            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('total_failed', 0))
+            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('found_5', 0))
+            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('found_6', 0))
+            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('checked_5', 0))
+            cursor.execute('INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)', ('checked_6', 0))
             
             conn.commit()
             conn.close()
             logger.info("✅ База данных инициализирована")
         except Exception as e:
-            logger.error(f"❌ Ошибка инициализации БД: {e}")
+            logger.error(f"❌ Ошибка БД: {e}")
     
-    def update_stats(self, user_id, url, status):
-        """Обновление статистики"""
+    def update_stats_5(self, checked, found):
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Добавляем запись о проверке
-            cursor.execute(
-                'INSERT INTO checks (user_id, url, status) VALUES (?, ?, ?)',
-                (user_id, url, status)
-            )
-            
-            # Обновляем общий счетчик
-            cursor.execute('UPDATE stats SET value = value + 1 WHERE key = ?', ('total_checked',))
-            
-            # Обновляем статус
-            if status == 'passed':
-                cursor.execute('UPDATE stats SET value = value + 1 WHERE key = ?', ('total_passed',))
-            elif status == 'failed':
-                cursor.execute('UPDATE stats SET value = value + 1 WHERE key = ?', ('total_failed',))
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (checked, 'checked_5'))
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (found, 'found_5'))
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (checked, 'total_checked'))
             
             conn.commit()
             conn.close()
-            return True
         except Exception as e:
-            logger.error(f"❌ Ошибка обновления статистики: {e}")
-            return False
+            logger.error(f"❌ Ошибка обновления: {e}")
+    
+    def update_stats_6(self, checked, found):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (checked, 'checked_6'))
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (found, 'found_6'))
+            cursor.execute('UPDATE stats SET value = value + ? WHERE key = ?', (checked, 'total_checked'))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления: {e}")
     
     def get_stats(self):
-        """Получение статистики"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -88,24 +75,13 @@ class Database:
             for key, value in rows:
                 stats[key] = value
             
-            # Гарантируем наличие всех ключей
             stats.setdefault('total_checked', 0)
-            stats.setdefault('total_passed', 0)
-            stats.setdefault('total_failed', 0)
+            stats.setdefault('found_5', 0)
+            stats.setdefault('found_6', 0)
+            stats.setdefault('checked_5', 0)
+            stats.setdefault('checked_6', 0)
             
             return stats
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статистики: {e}")
-            return {'total_checked': 0, 'total_passed': 0, 'total_failed': 0}
-    
-    def get_total_checked(self):
-        """Получить общее количество проверок"""
-        return self.get_stats().get('total_checked', 0)
-    
-    def get_total_passed(self):
-        """Получить количество успешных проверок"""
-        return self.get_stats().get('total_passed', 0)
-    
-    def get_total_failed(self):
-        """Получить количество неудачных проверок"""
-        return self.get_stats().get('total_failed', 0)
+            logger.error(f"❌ Ошибка получения: {e}")
+            return {'total_checked': 0, 'found_5': 0, 'found_6': 0, 'checked_5': 0, 'checked_6': 0}
